@@ -1881,140 +1881,183 @@ createArrowFiles <- function(
   outList <- .safelapply(seq_along(uniqueChr), function(x){
 
     tryCatch({
-
+      
       .logDiffTime(sprintf("%s Adding Chromosome %s of %s", prefix, x, length(uniqueChr)), t1 = tstart, verbose = FALSE, logFile = logFile)
       
       #Determine Ranges and RG Pre-Allocation
       chr <- uniqueChr[x]
       ix <- BiocGenerics::which(chunkChr == chr)
-
+      
       if(threads == 1){
-
+        
         if(length(ix) == 0){
-
+          
           .logMessage(msg = paste0(prefix, " detected 0 Fragments for ", chr), logFile = logFile)
-
+          .logDiffTime(sprintf(" detected 0 Fragments for chromosome %s %s ", x, chr), t1 = tstart, verbose = FALSE, logFile = logFile)
+          
           #HDF5 Write length 0
           chrPos <- paste0("Fragments/",chr,"/Ranges")
           chrRGLengths <- paste0("Fragments/",chr,"/RGLengths")
           chrRGValues <- paste0("Fragments/",chr,"/RGValues")
+          
           o <- h5createGroup(outArrow, paste0("Fragments/",chr))
           o <- .suppressAll(h5createDataset(outArrow, chrPos, storage.mode = "integer", dims = c(0, 2), level = 0))
           o <- .suppressAll(h5createDataset(outArrow, chrRGLengths, storage.mode = "integer", dims = c(0, 1), level = 0))
           o <- .suppressAll(h5createDataset(outArrow, chrRGValues, storage.mode = "character", dims = c(0, 1), level = 0, size = 4))
-
+          
           return(NULL)
-
+          
         }else{
-
+          
           chunkNamex <- chunkNames[ix]
           dtListx <- dtList[ix] 
-
+          
           #Read in Fragments!
           fragments <- lapply(seq_along(chunkNamex), function(i){
             .getFragsFromArrow(tmpFile, chr = chunkNamex[i], out = "IRanges")
           }) %>% Reduce("c", .)
           mcols(fragments)$RG@values <- stringr::str_split(mcols(fragments)$RG@values, pattern = "#", simplify=TRUE)[,2]
-
+          
           #Order RG RLE based on bcPass
           fragments <- fragments[BiocGenerics::which(mcols(fragments)$RG %bcin% bcPass)]
           fragments <- fragments[order(S4Vectors::match(mcols(fragments)$RG, bcPass))]
           lengthRG <- length(mcols(fragments)$RG@lengths)
-
+          
+          chrPos <- paste0("Fragments/",chr,"/Ranges")
+          chrRGLengths <- paste0("Fragments/",chr,"/RGLengths")
+          chrRGValues <- paste0("Fragments/",chr,"/RGValues")
+          
+          
           if(x == 1){
             .logThis(fragments, name = paste0(prefix, " .tmpToArrow Fragments-Chr-(",x," of ",length(uniqueChr),")-", uniqueChr[x]), logFile = logFile)
             .logThis(data.frame(bc = as.vector(mcols(fragments)$RG@values)), name = paste0(prefix, " .tmpToArrow Barcodes-Chr-(",x," of ",length(uniqueChr),")-", uniqueChr[x]), logFile = logFile)
           }
-
-          #HDF5 Write
-          chrPos <- paste0("Fragments/",chr,"/Ranges")
-          chrRGLengths <- paste0("Fragments/",chr,"/RGLengths")
-          chrRGValues <- paste0("Fragments/",chr,"/RGValues")
-          o <- h5createGroup(outArrow, paste0("Fragments/",chr))
-          o <- .suppressAll(h5createDataset(outArrow, chrPos, storage.mode = "integer", dims = c(length(fragments), 2), level = 0))
-          o <- .suppressAll(h5createDataset(outArrow, chrRGLengths, storage.mode = "integer", dims = c(lengthRG, 1), level = 0))
-          o <- .suppressAll(h5createDataset(outArrow, chrRGValues, storage.mode = "character", dims = c(lengthRG, 1), level = 0, 
-                  size = max(nchar(mcols(fragments)$RG@values)) + 1))
-          o <- h5write(obj = cbind(start(fragments),width(fragments)), file = outArrow, name = chrPos)
-          o <- h5write(obj = mcols(fragments)$RG@lengths, file = outArrow, name = chrRGLengths)
-          o <- h5write(obj = mcols(fragments)$RG@values, file = outArrow, name = chrRGValues)
-
-          #Free Some Memory!
-          rm(fragments)
-          gc()
-
-          return(NULL)
-
+          
+          ## possible that 0 fragment remains after bcPass filter in some very small scaffolds
+          if (lengthRG == 0) { 
+            .logMessage(msg = paste0(prefix, " detected 0 Fragments in cells passing filtering threshold for ", chr), logFile = logFile)
+            .logDiffTime(sprintf(" detected 0 Fragments in cells passing filtering threshold for chromosome %s %s ", x, chr), t1 = tstart, verbose = FALSE, logFile = logFile)
+            
+            #HDF5 Write length 0
+            o <- h5createGroup(outArrow, paste0("Fragments/",chr))
+            o <- .suppressAll(h5createDataset(outArrow, chrPos, storage.mode = "integer", dims = c(0, 2), level = 0))
+            o <- .suppressAll(h5createDataset(outArrow, chrRGLengths, storage.mode = "integer", dims = c(0, 1), level = 0))
+            o <- .suppressAll(h5createDataset(outArrow, chrRGValues, storage.mode = "character", dims = c(0, 1), level = 0, size = 4))
+            
+            return(NULL)
+            
+          } else {
+            
+            #HDF5 Write
+            
+            o <- h5createGroup(outArrow, paste0("Fragments/",chr))
+            o <- .suppressAll(h5createDataset(outArrow, chrPos, storage.mode = "integer", dims = c(length(fragments), 2), level = 0))
+            o <- .suppressAll(h5createDataset(outArrow, chrRGLengths, storage.mode = "integer", dims = c(lengthRG, 1), level = 0))
+            o <- .suppressAll(h5createDataset(outArrow, chrRGValues, storage.mode = "character", dims = c(lengthRG, 1), level = 0, 
+                                              size = max(nchar(mcols(fragments)$RG@values)) + 1))
+            o <- h5write(obj = cbind(start(fragments),width(fragments)), file = outArrow, name = chrPos)
+            o <- h5write(obj = mcols(fragments)$RG@lengths, file = outArrow, name = chrRGLengths)
+            o <- h5write(obj = mcols(fragments)$RG@values, file = outArrow, name = chrRGValues)
+            
+            #Free Some Memory!
+            rm(fragments)
+            gc()
+            
+            return(NULL)
+            
+            
+          }
+          
+          
         }
-
-      }else{
-
+        
+      }else{ ## thread != 1
+        
         #Temporary File
         tmpChrFile <- file.path("tmp", paste0(gsub(".arrow", "", outArrow), "#", chr, ".arrow"))
-
+        
         if(file.exists(tmpChrFile)){
           file.remove(tmpChrFile)
         }
         o <- h5createFile(tmpChrFile)
-
+        
         if(length(ix) == 0){
-
+          
           #HDF5 Write length 0
           chrPos <- paste0(chr, "._.Ranges")
           chrRGLengths <- paste0(chr, "._.RGLengths")
           chrRGValues <- paste0(chr, "._.RGValues")
-
+          
           o <- .suppressAll(h5createDataset(tmpChrFile, chrPos, storage.mode = "integer", dims = c(0, 2), level = 0))
           o <- .suppressAll(h5createDataset(tmpChrFile, chrRGLengths, storage.mode = "integer", dims = c(0, 1), level = 0))
           o <- .suppressAll(h5createDataset(tmpChrFile, chrRGValues, storage.mode = "character", dims = c(0, 1), level = 0, size = 4))
-
+          
           return(tmpChrFile)
-
+          
         }else{
-
+          
           chunkNamex <- chunkNames[ix]
           dtListx <- dtList[ix] 
-
+          
           #Read in Fragments!
           fragments <- lapply(seq_along(chunkNamex), function(i){
             .getFragsFromArrow(tmpFile, chr = chunkNamex[i], out = "IRanges")
           }) %>% Reduce("c", .)
           mcols(fragments)$RG@values <- stringr::str_split(mcols(fragments)$RG@values, pattern = "#", simplify=TRUE)[,2]
-
+          
           #Order RG RLE based on bcPass
           fragments <- fragments[BiocGenerics::which(mcols(fragments)$RG %bcin% bcPass)]
           fragments <- fragments[order(S4Vectors::match(mcols(fragments)$RG, bcPass))]
           lengthRG <- length(mcols(fragments)$RG@lengths)
-
+          
+          chrPos <- paste0(chr, "._.Ranges")
+          chrRGLengths <- paste0(chr, "._.RGLengths")
+          chrRGValues <- paste0(chr, "._.RGValues")
+          
           if(x == 1){
             .logThis(fragments, name = paste0(prefix, " .tmpToArrow Fragments-Chr-(",x," of ",length(uniqueChr),")-", uniqueChr[x]), logFile = logFile)
             .logThis(data.frame(bc = as.vector(mcols(fragments)$RG@values)), name = paste0(prefix, " .tmpToArrow Barcodes-Chr-(",x," of ",length(uniqueChr),")-", uniqueChr[x]), logFile = logFile)
           }
-
-          chrPos <- paste0(chr, "._.Ranges")
-          chrRGLengths <- paste0(chr, "._.RGLengths")
-          chrRGValues <- paste0(chr, "._.RGValues")
-
-          #HDF5 Write
-          o <- .suppressAll(h5createDataset(tmpChrFile, chrPos, storage.mode = "integer", dims = c(length(fragments), 2), level = 0))
-          o <- .suppressAll(h5createDataset(tmpChrFile, chrRGLengths, storage.mode = "integer", dims = c(lengthRG, 1), level = 0))
-          o <- .suppressAll(h5createDataset(tmpChrFile, chrRGValues, storage.mode = "character", dims = c(lengthRG, 1), level = 0, 
-                  size = max(nchar(mcols(fragments)$RG@values)) + 1))
-
-          o <- h5write(obj = cbind(start(fragments),width(fragments)), file = tmpChrFile, name = chrPos)
-          o <- h5write(obj = mcols(fragments)$RG@lengths, file = tmpChrFile, name = chrRGLengths)
-          o <- h5write(obj = mcols(fragments)$RG@values, file = tmpChrFile, name = chrRGValues)
-
-          #Free Some Memory!
-          rm(fragments)
-          gc()
-
-          return(tmpChrFile)
-
+          
+          if (lengthRG == 0) { 
+            ## possible that 0 fragment remains after bcPass filter in small scaffolds 
+            #.logMessage(msg = paste0(prefix, " detected 0 Fragments in cells passing filtering threshold for ", chr), logFile = logFile)
+            #.logDiffTime(sprintf(" detected 0 Fragments in cells passing filtering threshold for chromosome %s %s ", x, chr), t1 = tstart, verbose = FALSE, logFile = logFile)
+            
+            #HDF5 Write length 0
+            
+            o <- .suppressAll(h5createDataset(tmpChrFile, chrPos, storage.mode = "integer", dims = c(0, 2), level = 0))
+            o <- .suppressAll(h5createDataset(tmpChrFile, chrRGLengths, storage.mode = "integer", dims = c(0, 1), level = 0))
+            o <- .suppressAll(h5createDataset(tmpChrFile, chrRGValues, storage.mode = "character", dims = c(0, 1), level = 0, size = 4))
+            
+            return(NULL)
+            
+          } else{
+            
+            #HDF5 Write
+            o <- .suppressAll(h5createDataset(tmpChrFile, chrPos, storage.mode = "integer", dims = c(length(fragments), 2), level = 0))
+            o <- .suppressAll(h5createDataset(tmpChrFile, chrRGLengths, storage.mode = "integer", dims = c(lengthRG, 1), level = 0))
+            o <- .suppressAll(h5createDataset(tmpChrFile, chrRGValues, storage.mode = "character", dims = c(lengthRG, 1), level = 0, 
+                                              size = max(nchar(mcols(fragments)$RG@values)) + 1))
+            
+            o <- h5write(obj = cbind(start(fragments),width(fragments)), file = tmpChrFile, name = chrPos)
+            o <- h5write(obj = mcols(fragments)$RG@lengths, file = tmpChrFile, name = chrRGLengths)
+            o <- h5write(obj = mcols(fragments)$RG@values, file = tmpChrFile, name = chrRGValues)
+            
+            #Free Some Memory!
+            rm(fragments)
+            gc()
+            
+            return(tmpChrFile)
+            
+            
+          }
+          
+          
         }
-
+        
       }
-
+      
     }, error = function(e){
 
       errorList <- list(
